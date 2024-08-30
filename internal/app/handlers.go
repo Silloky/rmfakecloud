@@ -1047,7 +1047,7 @@ func (app *App) hwrIsMath(latex string) bool {
 }
 
 func (app *App) handleHwr(c *gin.Context) {
-	log.Info("math config is :", app.cfg.HWRMathFactors)
+	
 	body, err := io.ReadAll(c.Request.Body)
 	if err != nil || len(body) < 1 {
 		log.Warn("no body")

@@ -215,7 +215,7 @@ func FromEnv() *Config {
 		HTTPSCookie:       httpsCookie,
 		TrustProxy:        trustProxy,
 	}
-	log.Info("Configured with: ", os.Getenv(envHWRMathFactorsPath))
+	
 	if os.Getenv(envHWRMathFactorsPath) != "" {
         file, err := os.ReadFile(os.Getenv(envHWRMathFactorsPath))
         if err != nil {
