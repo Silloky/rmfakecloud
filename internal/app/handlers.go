@@ -1055,61 +1055,75 @@ func (app *App) handleHwr(c *gin.Context) {
 		return
 	}
 
-	var jsonBody JSONBody
-	if err := json.Unmarshal(body, &jsonBody); err != nil {
-		log.Error("could not unmarshal JSON: ", err)
-		internalError(c, "could not unmarshal JSON")
-		return
-	}
-	jsonBody.Configuration.RawContent.Recognition.Types = []string{ "math", "text" }
-    jsonBody.Configuration.RawContent.Convert.Types = []string{ "math", "text" }
-
 	const (
 		JIIX = "application/vnd.myscript.jiix"
 		LaTex = "application/x-latex"
 		TXT = "text/plain"
 	)
-	
-	myScriptResponse := app.getMyScriptConversion("Math", LaTex, jsonBody, c)
-	var textResponse string
-	if app.hwrIsMath(string(myScriptResponse)) {
-		textResponse = string(myScriptResponse)
-		if (strings.Contains(textResponse, "\\begin{aligned}")) {
-			replacements := map[string]string{
-				"=": "&=",
-				"\\leq": "&\\leq",
-				"\\geq": "&\\geq",
-				"\\neq": "&\\neq",
-				">": "&>",
-				"<": "&<",
-			}
-			for old, new := range replacements {
-				textResponse = strings.ReplaceAll(textResponse, old, new)
-			}
-			textResponse = "$$" + textResponse + "$$\n\n"
-		} else { // inline math, no alignment
-			textResponse = "$" + textResponse + "$\n\n"
+
+	if (app.cfg.HWRExportPath != "") {
+
+		var jsonBody JSONBody
+		if err := json.Unmarshal(body, &jsonBody); err != nil {
+			log.Error("could not unmarshal JSON: ", err)
+			internalError(c, "could not unmarshal JSON")
+			return
 		}
-	} else {
-		myScriptResponse := app.getMyScriptConversion("Text", TXT, jsonBody, c)
-		textResponse = string(myScriptResponse) + "\n\n"
-		textResponse = strings.Replace(textResponse, "•", "*", -1)
+
+		jsonBody.Configuration.RawContent.Recognition.Types = []string{ "math", "text" }
+		jsonBody.Configuration.RawContent.Convert.Types = []string{ "math", "text" }
+		
+		myScriptResponse := app.getMyScriptConversion("Math", LaTex, jsonBody, c)
+		var textResponse string
+		if app.hwrIsMath(string(myScriptResponse)) {
+			textResponse = string(myScriptResponse)
+			if (strings.Contains(textResponse, "\\begin{aligned}")) {
+				replacements := map[string]string{
+					"=": "&=",
+					"\\leq": "&\\leq",
+					"\\geq": "&\\geq",
+					"\\neq": "&\\neq",
+					">": "&>",
+					"<": "&<",
+				}
+				for old, new := range replacements {
+					textResponse = strings.ReplaceAll(textResponse, old, new)
+				}
+				textResponse = "$$" + textResponse + "$$\n\n"
+			} else { // inline math, no alignment
+				textResponse = "$" + textResponse + "$\n\n"
+			}
+		} else {
+			myScriptResponse := app.getMyScriptConversion("Text", TXT, jsonBody, c)
+			textResponse = string(myScriptResponse) + "\n\n"
+			textResponse = strings.Replace(textResponse, "•", "*", -1)
+		}
+	
+		file, err := os.OpenFile(app.cfg.HWRExportPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0664)
+		if err != nil {
+			log.Error("could not open file: ", err)
+			internalError(c, "could not open file")
+			return
+		}
+		defer file.Close()
+	
+		if _, err := file.Write([]byte(textResponse)); err != nil {
+			log.Error("could not write to file: ", err)
+			internalError(c, "could not write to file")
+			return
+		}
+		
+		c.Data(http.StatusOK, JIIX, nil)
+
+	} else { // standard behavior
+		response, err := app.hwrClient.SendRequest(body, JIIX)
+		if err != nil {
+			log.Error(err)
+			internalError(c, "cannot send")
+			return
+		}
+		c.Data(http.StatusOK, JIIX, response)
 	}
-
-	file, err := os.OpenFile("/srv/data/services/rmfakecloud/responses.txt", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0664)
-    if err != nil {
-        log.Error("could not open file: ", err)
-        internalError(c, "could not open file")
-        return
-    }
-    defer file.Close()
-
-	if _, err := file.Write([]byte(textResponse)); err != nil {
-        log.Error("could not write to file: ", err)
-        internalError(c, "could not write to file")
-        return
-    }
-	c.Data(http.StatusOK, JIIX, nil)
 }
 
 func (app *App) connectWebSocket(c *gin.Context) {

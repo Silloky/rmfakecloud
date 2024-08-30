@@ -71,6 +71,8 @@ const (
 	envHwrHmac = "RMAPI_HWR_HMAC"
 	// envHWRMathFactorsPath the path to the math factors
 	envHWRMathFactorsPath = "RMAPI_HWR_MATH_FACTORS_PATH"
+	// envHWRExportPath the path to the export folder
+	envHWRExportPath = "RMAPI_HWR_EXPORT_PATH"
 
 	EnvLogFile     = "RM_LOGFILE"
 	envHTTPSCookie = "RM_HTTPS_COOKIE"
@@ -92,6 +94,7 @@ type Config struct {
 	HWRApplicationKey string
 	HWRHmac           string
 	HWRMathFactors	  map[string]float64
+	HWRExportPath     string
 	HTTPSCookie       bool
 	TrustProxy        bool
 }
@@ -117,6 +120,9 @@ func (cfg *Config) Verify() {
 	}
 	if cfg.HWRHmac == "" {
 		log.Info("provide the myScript hmac in: " + envHwrHmac)
+	}
+	if cfg.HWRExportPath == "" {
+		log.Info("the HWR export path is not set, function will be standard")
 	}
 }
 
@@ -212,6 +218,7 @@ func FromEnv() *Config {
 		HWRApplicationKey: os.Getenv(envHwrApplicationKey),
 		HWRHmac:           os.Getenv(envHwrHmac),
 		HWRMathFactors:    nil,
+		HWRExportPath:     os.Getenv(envHWRExportPath),
 		HTTPSCookie:       httpsCookie,
 		TrustProxy:        trustProxy,
 	}
