@@ -1029,33 +1029,9 @@ func (app *App) getMyScriptConversion(recogMode string, responseType string, jso
 	return myScriptResponse
 }
 
-func hwrIsMath(latex string) bool {
-    mathPatterns := map[string]float64{
-        `\\dfrac`: 0.8,    // Fraction
-        `\\sum`: 0.7,     // Summation
-        `\\int`: 0.6,     // Integral
-        `\\sqrt`: 0.8,    // Square root
-        `\^`: 0.2,        // Superscript
-        `\_`: 0.2,        // Subscript
-		`x`: 0.1, // Symbolic
-		`y`: 0.1, // Symbolic
-		`\\begin{cases}`: 0.8, // Cases
-		`\\end{cases}`: 0.8, // Cases
-		`=`: 0.3,
-		`\\leq`: 0.5,
-		`\\geq`: 0.5,
-		`\\neq`: 0.3,
-		`\\infinty`: 0.7,
-		`>`: 0.1,
-		`<`: 0.1,
-		`\\Longrightarrow`: 0.4,
-		`\d+`: 0.1,
-		`\+`: 0.4,
-		`-`: 0.1,
-    }
-
+func (app *App) hwrIsMath(latex string) bool {
     var matchCount float64
-    for pattern, weight := range mathPatterns {
+    for pattern, weight := range  app.cfg.HWRMathFactors {
         re := regexp.MustCompile(pattern)
         matches := re.FindAllString(latex, -1)
         if len(matches) > 0 {
@@ -1071,6 +1047,7 @@ func hwrIsMath(latex string) bool {
 }
 
 func (app *App) handleHwr(c *gin.Context) {
+	log.Info("math config is :", app.cfg.HWRMathFactors)
 	body, err := io.ReadAll(c.Request.Body)
 	if err != nil || len(body) < 1 {
 		log.Warn("no body")
@@ -1095,7 +1072,7 @@ func (app *App) handleHwr(c *gin.Context) {
 	
 	myScriptResponse := app.getMyScriptConversion("Math", LaTex, jsonBody, c)
 	var textResponse string
-	if hwrIsMath(string(myScriptResponse)) {
+	if app.hwrIsMath(string(myScriptResponse)) {
 		textResponse = string(myScriptResponse)
 		if (strings.Contains(textResponse, "\\begin{aligned}")) {
 			replacements := map[string]string{

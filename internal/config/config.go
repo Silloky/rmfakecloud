@@ -4,6 +4,7 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"crypto/tls"
+	"encoding/json"
 	"fmt"
 	"net/mail"
 	"os"
@@ -68,7 +69,9 @@ const (
 	envHwrApplicationKey = "RMAPI_HWR_APPLICATIONKEY"
 	// envHwrHmac myScript hmac key
 	envHwrHmac = "RMAPI_HWR_HMAC"
-	// EnvLogFile log file to use
+	// envHWRMathFactorsPath the path to the math factors
+	envHWRMathFactorsPath = "RMAPI_HWR_MATH_FACTORS_PATH"
+
 	EnvLogFile     = "RM_LOGFILE"
 	envHTTPSCookie = "RM_HTTPS_COOKIE"
 	envTrustProxy  = "RM_TRUST_PROXY"
@@ -88,6 +91,7 @@ type Config struct {
 	LogFile           string
 	HWRApplicationKey string
 	HWRHmac           string
+	HWRMathFactors	  map[string]float64
 	HTTPSCookie       bool
 	TrustProxy        bool
 }
@@ -207,9 +211,45 @@ func FromEnv() *Config {
 		SMTPConfig:        smtpCfg,
 		HWRApplicationKey: os.Getenv(envHwrApplicationKey),
 		HWRHmac:           os.Getenv(envHwrHmac),
+		HWRMathFactors:    nil,
 		HTTPSCookie:       httpsCookie,
 		TrustProxy:        trustProxy,
 	}
+	log.Info("Configured with: ", os.Getenv(envHWRMathFactorsPath))
+	if os.Getenv(envHWRMathFactorsPath) != "" {
+        file, err := os.ReadFile(os.Getenv(envHWRMathFactorsPath))
+        if err != nil {
+            log.Printf("Error reading HWRMathFactors file: %v", err)
+        } else {
+            err = json.Unmarshal(file, &cfg.HWRMathFactors)
+            if err != nil {
+                log.Printf("Error parsing HWRMathFactors file: %v", err)
+            }
+        }
+    } else {
+		cfg.HWRMathFactors = map[string]float64{
+            `\\dfrac`: 0.8,    // Fraction
+            `\\sum`: 0.7,     // Summation
+            `\\int`: 0.6,     // Integral
+            `\\sqrt`: 0.8,    // Square root
+            `\^`: 0.5,        // Superscript
+            `\_`: 0.5,        // Subscript
+            `x`: 0.1,         // Symbolic
+            `y`: 0.1,         // Symbolic
+            `=`: 0.3,         // Equals
+            `\\leq`: 0.5,     // Less than or equal
+            `\\geq`: 0.5,     // Greater than or equal
+            `\\neq`: 0.3,     // Not equal
+            `\\infty`: 0.7,   // Infinity
+            `>`: 0.1,         // Greater than
+            `<`: 0.1,         // Less than
+            `\\Longrightarrow`: 0.4, // Implies
+            `\d+`: 0.1,       // Number with unknown amount of digits
+            `\+`: 0.1,        // Plus sign
+            `-`: 0.1,         // Minus sign
+        }
+	}
+
 	return &cfg
 }
 
@@ -271,5 +311,6 @@ myScript hwr (needs a developer account):
 
 		envHwrApplicationKey,
 		envHwrHmac,
+		envHWRMathFactorsPath,
 	)
 }
