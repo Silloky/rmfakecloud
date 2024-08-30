@@ -10,6 +10,8 @@ import (
 	"mime/multipart"
 	"net/http"
 	"net/mail"
+	"os"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -18,7 +20,8 @@ import (
 	"github.com/ddvk/rmfakecloud/internal/common"
 	"github.com/ddvk/rmfakecloud/internal/config"
 	"github.com/ddvk/rmfakecloud/internal/email"
-	"github.com/ddvk/rmfakecloud/internal/hwr"
+
+	// "github.com/ddvk/rmfakecloud/internal/hwr"
 	"github.com/ddvk/rmfakecloud/internal/integrations"
 	"github.com/ddvk/rmfakecloud/internal/messages"
 	"github.com/ddvk/rmfakecloud/internal/storage"
@@ -975,21 +978,163 @@ func (app *App) uploadRequest(c *gin.Context) {
 	c.JSON(http.StatusOK, response)
 }
 
+type JSONBody struct {
+		Configuration struct {
+			Export struct {
+				Jiix struct {
+					Strokes bool `json:"strokes"`
+					Text struct {
+							Chars bool `json:"chars"`
+							Words bool `json:"words"`
+					} `json:"text"`
+				} `json:"jiix"`
+			} `json:"export"`
+			Lang       string `json:"lang"`
+			RawContent struct {
+				Recognition struct {
+					Types []string `json:"types"`
+				} `json:"recognition"`
+				Convert struct {
+					Types []string `json:"types"`
+				} `json:"convert"`
+			} `json:"raw-content"`
+		} `json:"configuration"`
+		ContentType string `json:"contentType"`
+		Height       int    `json:"height"`
+		StrokeGroups []struct {
+			Strokes []struct {
+				X []int `json:"x"`
+				Y []int `json:"y"`
+			} `json:"strokes"`
+		} `json:"strokeGroups"`
+		Width int `json:"width"`
+		XDPI  int `json:"xDPI"`
+		YDPI  int `json:"yDPI"`
+	}
+
+func (app *App) getMyScriptConversion(recogMode string, responseType string, jsonBody JSONBody, c *gin.Context) []byte {
+	jsonBody.ContentType = recogMode
+	modifiedJSON, err := json.MarshalIndent(jsonBody, "", "    ")
+	if err != nil {
+		log.Error("could not marshal JSON: ", err)
+		internalError(c, "could not marshal JSON")
+		return nil
+	}
+	myScriptResponse, err := app.hwrClient.SendRequest(modifiedJSON, responseType)
+	if err != nil {
+		log.Error(err)
+		internalError(c, "cannot send")
+		return nil
+	}
+	return myScriptResponse
+}
+
+func hwrIsMath(latex string) bool {
+    mathPatterns := map[string]float64{
+        `\\dfrac`: 0.8,    // Fraction
+        `\\sum`: 0.7,     // Summation
+        `\\int`: 0.6,     // Integral
+        `\\sqrt`: 0.8,    // Square root
+        `\^`: 0.2,        // Superscript
+        `\_`: 0.2,        // Subscript
+		`x`: 0.1, // Symbolic
+		`y`: 0.1, // Symbolic
+		`\\begin{cases}`: 0.8, // Cases
+		`\\end{cases}`: 0.8, // Cases
+		`=`: 0.3,
+		`\\leq`: 0.5,
+		`\\geq`: 0.5,
+		`\\neq`: 0.3,
+		`\\infinty`: 0.7,
+		`>`: 0.1,
+		`<`: 0.1,
+		`\\Longrightarrow`: 0.4,
+		`\d+`: 0.1,
+		`\+`: 0.4,
+		`-`: 0.1,
+    }
+
+    var matchCount float64
+    for pattern, weight := range mathPatterns {
+        re := regexp.MustCompile(pattern)
+        matches := re.FindAllString(latex, -1)
+        if len(matches) > 0 {
+            log.Printf("Matched pattern: %s, occurrences: %d, weight: %f", pattern, len(matches), weight)
+            matchCount += weight * float64(len(matches))
+        }
+        log.Printf("Current match count: %f", matchCount)
+        if matchCount >= 1 {
+            return true
+        }
+    }
+    return false
+}
+
 func (app *App) handleHwr(c *gin.Context) {
 	body, err := io.ReadAll(c.Request.Body)
 	if err != nil || len(body) < 1 {
 		log.Warn("no body")
-		badReq(c, "missing bbody")
+		badReq(c, "missing body")
 		return
 	}
-	response, err := app.hwrClient.SendRequest(body)
-	if err != nil {
-		log.Error(err)
-		internalError(c, "cannot send")
+
+	var jsonBody JSONBody
+	if err := json.Unmarshal(body, &jsonBody); err != nil {
+		log.Error("could not unmarshal JSON: ", err)
+		internalError(c, "could not unmarshal JSON")
 		return
 	}
-	c.Data(http.StatusOK, hwr.JIIX, response)
+	jsonBody.Configuration.RawContent.Recognition.Types = []string{ "math", "text" }
+    jsonBody.Configuration.RawContent.Convert.Types = []string{ "math", "text" }
+
+	const (
+		JIIX = "application/vnd.myscript.jiix"
+		LaTex = "application/x-latex"
+		TXT = "text/plain"
+	)
+	
+	myScriptResponse := app.getMyScriptConversion("Math", LaTex, jsonBody, c)
+	var textResponse string
+	if hwrIsMath(string(myScriptResponse)) {
+		textResponse = string(myScriptResponse)
+		if (strings.Contains(textResponse, "\\begin{aligned}")) {
+			replacements := map[string]string{
+				"=": "&=",
+				"\\leq": "&\\leq",
+				"\\geq": "&\\geq",
+				"\\neq": "&\\neq",
+				">": "&>",
+				"<": "&<",
+			}
+			for old, new := range replacements {
+				textResponse = strings.ReplaceAll(textResponse, old, new)
+			}
+			textResponse = "$$" + textResponse + "$$\n\n"
+		} else { // inline math, no alignment
+			textResponse = "$" + textResponse + "$\n\n"
+		}
+	} else {
+		myScriptResponse := app.getMyScriptConversion("Text", TXT, jsonBody, c)
+		textResponse = string(myScriptResponse) + "\n\n"
+		textResponse = strings.Replace(textResponse, "•", "*", -1)
+	}
+
+	file, err := os.OpenFile("/srv/data/services/rmfakecloud/responses.txt", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0664)
+    if err != nil {
+        log.Error("could not open file: ", err)
+        internalError(c, "could not open file")
+        return
+    }
+    defer file.Close()
+
+	if _, err := file.Write([]byte(textResponse)); err != nil {
+        log.Error("could not write to file: ", err)
+        internalError(c, "could not write to file")
+        return
+    }
+	c.Data(http.StatusOK, JIIX, nil)
 }
+
 func (app *App) connectWebSocket(c *gin.Context) {
 	uid := c.GetString(userIDKey)
 	deviceID := c.GetString(deviceIDKey)

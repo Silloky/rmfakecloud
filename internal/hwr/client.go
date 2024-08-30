@@ -12,19 +12,14 @@ import (
 	"github.com/ddvk/rmfakecloud/internal/config"
 )
 
-const (
-	url = "https://cloud.myscript.com/api/v4.0/iink/batch"
-
-	// JIIX jiix type
-	JIIX = "application/vnd.myscript.jiix"
-)
+const url = "https://cloud.myscript.com/api/v4.0/iink/batch"
 
 type HWRClient struct {
 	Cfg *config.Config
 }
 
 // SendRequest sends the request
-func (hwr *HWRClient) SendRequest(data []byte) (body []byte, err error) {
+func (hwr *HWRClient) SendRequest(data []byte, responseType string) (body []byte, err error) {
 	if hwr.Cfg == nil || hwr.Cfg.HWRApplicationKey == "" || hwr.Cfg.HWRHmac == "" {
 		return nil, fmt.Errorf("no hwr key set")
 	}
@@ -40,7 +35,8 @@ func (hwr *HWRClient) SendRequest(data []byte) (body []byte, err error) {
 	if err != nil {
 		return nil, err
 	}
-	req.Header.Set("Accept", JIIX)
+	
+	req.Header.Set("Accept", responseType + ",application/json")
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("applicationKey", appKey)
 	req.Header.Set("hmac", result)
