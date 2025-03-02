@@ -37,7 +37,7 @@ func sanitizeFileName(fileName string) string {
 }
 
 func (fs *FileSystemStorage) getUserPath(uid string) string {
-	return filepath.Join(fs.Cfg.DataDir, filepath.Base(userDir), sanitizeFileName(uid))
+	return filepath.Join(fs.Cfg.DataDir, filepath.Base(userDir), common.SanitizeUid(uid))
 }
 
 // gets the blobstorage path
@@ -167,9 +167,9 @@ func (fs *FileSystemStorage) GetStorageURL(uid, id string) (docurl string, expir
 	claim := &StorageClaim{
 		DocumentID: id,
 		UserID:     uid,
-		StandardClaims: jwt.StandardClaims{
-			ExpiresAt: exp.Unix(),
-			Audience:  storageUsage,
+		RegisteredClaims: jwt.RegisteredClaims{
+			ExpiresAt: jwt.NewNumericDate(exp),
+			Audience:  []string{storageUsage},
 		},
 	}
 	signedToken, err := common.SignClaims(claim, fs.Cfg.JWTSecretKey)

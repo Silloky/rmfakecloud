@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/ddvk/rmfakecloud/internal/common"
+	"github.com/ddvk/rmfakecloud/internal/integrations"
 	"github.com/ddvk/rmfakecloud/internal/model"
 	"github.com/ddvk/rmfakecloud/internal/storage"
 	"github.com/ddvk/rmfakecloud/internal/ui/viewmodel"
@@ -13,6 +14,7 @@ import (
 	"github.com/golang-jwt/jwt/v4"
 	"github.com/google/uuid"
 	log "github.com/sirupsen/logrus"
+	"gopkg.in/yaml.v3"
 )
 
 const (
@@ -20,11 +22,18 @@ const (
 	browserIDContextKey = "browserID"
 	isSync15Key         = "sync15"
 	docIDParam          = "docid"
+	intIDParam          = "intid"
 	uiLogger            = "[ui] "
 	ui10                = " [10] "
 	useridParam         = "userid"
 	cookieName          = ".Authrmfakecloud"
 )
+
+func userID(c *gin.Context) string {
+	//TODO: suppress the warning
+	//codeql[go/path-injection]
+	return c.GetString(userIDContextKey)
+}
 
 func (app *ReactAppWrapper) register(c *gin.Context) {
 
@@ -39,7 +48,7 @@ func (app *ReactAppWrapper) register(c *gin.Context) {
 	if client != "localhost" &&
 		client != "::1" &&
 		client != "127.0.0.1" {
-		c.AbortWithStatusJSON(http.StatusForbidden, gin.H{"error": "Registrations are closed"})
+		c.AbortWithStatusJSON(http.StatusForbidden, viewmodel.NewErrorResponse("Registrations are closed"))
 		return
 	}
 
@@ -123,16 +132,16 @@ func (app *ReactAppWrapper) login(c *gin.Context) {
 		scopes = isSync15Key
 	}
 	expiresAfter := 24 * time.Hour
-	expires := time.Now().Add(expiresAfter).Unix()
+	expires := time.Now().Add(expiresAfter)
 	claims := &WebUserClaims{
 		UserID:    user.ID,
 		BrowserID: uuid.NewString(),
 		Email:     user.Email,
 		Scopes:    scopes,
-		StandardClaims: jwt.StandardClaims{
-			ExpiresAt: expires,
+		RegisteredClaims: jwt.RegisteredClaims{
+			ExpiresAt: jwt.NewNumericDate(expires),
 			Issuer:    "rmFake WEB",
-			Audience:  WebUsage,
+			Audience:  []string{WebUsage},
 		},
 	}
 	if user.IsAdmin {
@@ -149,6 +158,7 @@ func (app *ReactAppWrapper) login(c *gin.Context) {
 		return
 	}
 	log.Debug("cookie expires after: ", expiresAfter)
+	c.SetSameSite(http.SameSiteStrictMode)
 	c.SetCookie(cookieName, tokenString, int(expiresAfter.Seconds()), "/", "", app.cfg.HTTPSCookie, true)
 
 	c.String(http.StatusOK, tokenString)
@@ -171,11 +181,11 @@ func (app *ReactAppWrapper) changePassword(c *gin.Context) {
 		return
 	}
 
-	uid := c.GetString(userIDContextKey)
+	uid := userID(c)
 
 	if user.ID != uid {
 		log.Error("Trying to change password for a different user.")
-		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "cant do that"})
+		c.AbortWithStatusJSON(http.StatusBadRequest, viewmodel.NewErrorResponse("cant do that"))
 		return
 	}
 
@@ -184,7 +194,7 @@ func (app *ReactAppWrapper) changePassword(c *gin.Context) {
 		if err != nil {
 			log.Error(err)
 		}
-		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "Invalid email or password"})
+		c.AbortWithStatusJSON(http.StatusBadRequest, viewmodel.NewErrorResponse("Invalid email or password"))
 		return
 	}
 
@@ -204,19 +214,19 @@ func (app *ReactAppWrapper) changePassword(c *gin.Context) {
 }
 
 func (app *ReactAppWrapper) newCode(c *gin.Context) {
-	uid := c.GetString(userIDContextKey)
+	uid := userID(c)
 
 	user, err := app.userStorer.GetUser(uid)
 	if err != nil {
 		log.Error("Unable to find user: ", err)
-		c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.AbortWithStatusJSON(http.StatusInternalServerError, viewmodel.NewErrorResponse(err.Error()))
 		return
 	}
 
 	code, err := app.codeConnector.NewCode(user.ID)
 	if err != nil {
 		log.Error("Unable to generate new device code: ", err)
-		c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{"error": "Unable to generate new code"})
+		c.AbortWithStatusJSON(http.StatusInternalServerError, viewmodel.NewErrorResponse("Unable to generate new code"))
 		return
 	}
 
@@ -234,8 +244,9 @@ func (app *ReactAppWrapper) getBackend(c *gin.Context) backend {
 	}
 	return backend
 }
+
 func (app *ReactAppWrapper) listDocuments(c *gin.Context) {
-	uid := c.GetString(userIDContextKey)
+	uid := userID(c)
 
 	var tree *viewmodel.DocumentTree
 
@@ -249,7 +260,7 @@ func (app *ReactAppWrapper) listDocuments(c *gin.Context) {
 	c.JSON(http.StatusOK, tree)
 }
 func (app *ReactAppWrapper) getDocument(c *gin.Context) {
-	uid := c.GetString(userIDContextKey)
+	uid := userID(c)
 	docid := common.ParamS(docIDParam, c)
 
 	exportType := "pdf"
@@ -270,7 +281,7 @@ func (app *ReactAppWrapper) getDocument(c *gin.Context) {
 }
 
 func (app *ReactAppWrapper) getDocumentMetadata(c *gin.Context) {
-	uid := c.GetString(userIDContextKey)
+	uid := userID(c)
 	docid := common.ParamS(docIDParam, c)
 	// if err != nil {
 	// 	log.Error(err)
@@ -291,7 +302,7 @@ func (app *ReactAppWrapper) updateDocument(c *gin.Context) {
 		return
 	}
 	backend := app.getBackend(c)
-	uid := c.GetString(userIDContextKey)
+	uid := userID(c)
 	log.Info(uiLogger, ui10, "updatedoc")
 	err := backend.UpdateDocument(uid, upd.DocumentID, upd.Name, upd.ParentID)
 	if err != nil {
@@ -302,7 +313,7 @@ func (app *ReactAppWrapper) updateDocument(c *gin.Context) {
 	c.Status(http.StatusOK)
 }
 func (app *ReactAppWrapper) deleteDocument(c *gin.Context) {
-	uid := c.GetString(userIDContextKey)
+	uid := userID(c)
 	docid := c.Param("docid")
 	backend := app.getBackend(c)
 
@@ -320,7 +331,7 @@ func (app *ReactAppWrapper) createFolder(c *gin.Context) {
 		badReq(c, err.Error())
 		return
 	}
-	uid := c.GetString(userIDContextKey)
+	uid := userID(c)
 
 	backend := app.getBackend(c)
 
@@ -334,7 +345,7 @@ func (app *ReactAppWrapper) createFolder(c *gin.Context) {
 }
 
 func (app *ReactAppWrapper) createDocument(c *gin.Context) {
-	uid := c.GetString(userIDContextKey)
+	uid := userID(c)
 	log.Info("uploading documents from: ", uid)
 
 	backend := app.getBackend(c)
@@ -347,8 +358,11 @@ func (app *ReactAppWrapper) createDocument(c *gin.Context) {
 	}
 	parentID := ""
 	if parent, ok := form.Value["parent"]; ok {
-		parentID = parent[0]
+		if parent[0] != "root" {
+			parentID = parent[0]
+		}
 	}
+
 	log.Info("Parent: " + parentID)
 
 	docs := []*storage.Document{}
@@ -382,7 +396,7 @@ func (app *ReactAppWrapper) getAppUsers(c *gin.Context) {
 
 	if err != nil {
 		log.Error(err)
-		c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{"error": "Unable to get users."})
+		c.AbortWithStatusJSON(http.StatusInternalServerError, viewmodel.NewErrorResponse("Unable to get users."))
 		return
 	}
 
@@ -393,6 +407,7 @@ func (app *ReactAppWrapper) getAppUsers(c *gin.Context) {
 			Email:     u.Email,
 			Name:      u.Name,
 			CreatedAt: u.CreatedAt,
+			IsAdmin:   u.IsAdmin,
 		}
 		uilist = append(uilist, usr)
 	}
@@ -469,7 +484,7 @@ func (app *ReactAppWrapper) updateUser(c *gin.Context) {
 }
 func (app *ReactAppWrapper) deleteUser(c *gin.Context) {
 	uid := c.Param(useridParam)
-	if uid == c.GetString(userIDContextKey) {
+	if uid == userID(c) {
 		log.Error("can't remove current user ")
 		c.AbortWithStatus(http.StatusInternalServerError)
 		return
@@ -507,4 +522,241 @@ func (app *ReactAppWrapper) createUser(c *gin.Context) {
 		return
 	}
 	c.Status(http.StatusCreated)
+}
+
+func (app *ReactAppWrapper) listIntegrations(c *gin.Context) {
+	uid := userID(c)
+
+	user, err := app.userStorer.GetUser(uid)
+	if err != nil {
+		log.Error(err)
+		c.AbortWithStatus(http.StatusUnauthorized)
+		return
+	}
+
+	c.JSON(http.StatusOK, user.Integrations)
+}
+
+func warnLocalfsEdition(c *gin.Context, int *model.IntegrationConfig) {
+	s, err := yaml.Marshal(gin.H{"integrations": []*model.IntegrationConfig{int}})
+	if err != nil {
+		log.Error("error updating user", err)
+		c.AbortWithStatus(http.StatusInternalServerError)
+		return
+	}
+	c.AbortWithStatusJSON(http.StatusForbidden,
+		viewmodel.NewErrorResponse("To avoid security issues with local directory integration, you have to manually edit your .userprofile file:\n\n"+string(s)))
+}
+
+func (app *ReactAppWrapper) createIntegration(c *gin.Context) {
+	int := model.IntegrationConfig{}
+	if err := c.ShouldBindJSON(&int); err != nil {
+		log.Error(err)
+		badReq(c, err.Error())
+		return
+	}
+
+	if int.Provider == integrations.LocalfsProvider {
+		int.ID = uuid.NewString()
+		warnLocalfsEdition(c, &int)
+		return
+	}
+
+	uid := userID(c)
+
+	user, err := app.userStorer.GetUser(uid)
+	if err != nil {
+		log.Error(err)
+		c.AbortWithStatus(http.StatusUnauthorized)
+		return
+	}
+
+	int.ID = uuid.NewString()
+	user.Integrations = append(user.Integrations, int)
+
+	err = app.userStorer.UpdateUser(user)
+
+	if err != nil {
+		log.Error("error updating user", err)
+		c.AbortWithStatus(http.StatusInternalServerError)
+		return
+	}
+
+	c.JSON(http.StatusOK, int)
+}
+
+func (app *ReactAppWrapper) getIntegration(c *gin.Context) {
+	uid := userID(c)
+
+	intid := common.ParamS(intIDParam, c)
+
+	user, err := app.userStorer.GetUser(uid)
+	if err != nil {
+		log.Error(err)
+		c.AbortWithStatus(http.StatusUnauthorized)
+		return
+	}
+
+	for _, integration := range user.Integrations {
+		if integration.ID == intid {
+			c.JSON(http.StatusOK, integration)
+			return
+		}
+	}
+
+	c.AbortWithStatus(http.StatusNotFound)
+}
+
+func (app *ReactAppWrapper) updateIntegration(c *gin.Context) {
+	int := model.IntegrationConfig{}
+	if err := c.ShouldBindJSON(&int); err != nil {
+		log.Error(err)
+		badReq(c, err.Error())
+		return
+	}
+
+	if int.Provider == integrations.LocalfsProvider {
+		warnLocalfsEdition(c, &int)
+		return
+	}
+
+	uid := userID(c)
+
+	intid := common.ParamS(intIDParam, c)
+
+	user, err := app.userStorer.GetUser(uid)
+	if err != nil {
+		log.Error(err)
+		c.AbortWithStatus(http.StatusUnauthorized)
+		return
+	}
+
+	for idx, integration := range user.Integrations {
+		if integration.ID == intid {
+			int.ID = integration.ID
+			user.Integrations[idx] = int
+
+			err = app.userStorer.UpdateUser(user)
+
+			if err != nil {
+				log.Error("error updating user", err)
+				c.AbortWithStatus(http.StatusInternalServerError)
+				return
+			}
+
+			c.JSON(http.StatusOK, int)
+			return
+		}
+	}
+
+	c.AbortWithStatus(http.StatusNotFound)
+}
+
+func (app *ReactAppWrapper) deleteIntegration(c *gin.Context) {
+	uid := userID(c)
+
+	intid := common.ParamS(intIDParam, c)
+
+	user, err := app.userStorer.GetUser(uid)
+	if err != nil {
+		log.Error(err)
+		c.AbortWithStatus(http.StatusUnauthorized)
+		return
+	}
+
+	for idx, integration := range user.Integrations {
+		if integration.ID == intid {
+			user.Integrations = append(user.Integrations[:idx], user.Integrations[idx+1:]...)
+
+			err = app.userStorer.UpdateUser(user)
+
+			if err != nil {
+				log.Error("error updating user", err)
+				c.AbortWithStatus(http.StatusInternalServerError)
+				return
+			}
+
+			c.Status(http.StatusAccepted)
+			return
+		}
+	}
+
+	c.AbortWithStatus(http.StatusNotFound)
+}
+
+func (app *ReactAppWrapper) exploreIntegration(c *gin.Context) {
+	uid := userID(c)
+
+	integrationID := common.ParamS(intIDParam, c)
+
+	integrationProvider, err := integrations.GetIntegrationProvider(app.userStorer, uid, integrationID)
+	if err != nil {
+		log.Error(err)
+		c.AbortWithStatus(http.StatusInternalServerError)
+		return
+	}
+
+	folder := common.ParamS("path", c)
+	if folder == "" {
+		folder = "root"
+	}
+
+	response, err := integrationProvider.List(folder, 2)
+	if err != nil {
+		log.Error(err)
+		c.AbortWithStatus(http.StatusInternalServerError)
+		return
+	}
+
+	c.JSON(http.StatusOK, response)
+}
+
+func (app *ReactAppWrapper) getMetadataIntegration(c *gin.Context) {
+	uid := userID(c)
+
+	integrationID := common.ParamS(intIDParam, c)
+
+	integrationProvider, err := integrations.GetIntegrationProvider(app.userStorer, uid, integrationID)
+	if err != nil {
+		log.Error(err)
+		c.AbortWithStatus(http.StatusInternalServerError)
+		return
+	}
+
+	fileid := common.ParamS("path", c)
+
+	response, err := integrationProvider.GetMetadata(fileid)
+	if err != nil {
+		log.Error(err)
+		c.AbortWithStatus(http.StatusInternalServerError)
+		return
+	}
+
+	c.JSON(http.StatusOK, response)
+}
+
+func (app *ReactAppWrapper) downloadThroughIntegration(c *gin.Context) {
+	uid := userID(c)
+
+	integrationID := common.ParamS(intIDParam, c)
+
+	integrationProvider, err := integrations.GetIntegrationProvider(app.userStorer, uid, integrationID)
+	if err != nil {
+		log.Error(err)
+		c.AbortWithStatus(http.StatusInternalServerError)
+		return
+	}
+
+	fileid := common.ParamS("path", c)
+
+	response, size, err := integrationProvider.Download(fileid)
+	if err != nil {
+		log.Error(err)
+		c.AbortWithStatus(http.StatusInternalServerError)
+		return
+	}
+
+	defer response.Close()
+
+	c.DataFromReader(http.StatusOK, size, "", response, nil)
 }

@@ -1,15 +1,22 @@
 ARG VERSION=0.0.0
-FROM --platform=$BUILDPLATFORM node:lts-alpine as uibuilder
-WORKDIR /src
-COPY ui .
-RUN yarn && yarn build 
+FROM --platform=$BUILDPLATFORM node:lts AS uibuilder
+ENV PNPM_HOME="/pnpm"
+ENV PATH="$PNPM_HOME:$PATH"
+RUN corepack enable pnpm && corepack install -g pnpm@latest-9
 
-FROM golang:1-alpine as gobuilder
+WORKDIR /src
+#COPY ui/package.json ui/pnpm-lock.yaml /src
+#RUN pnpm fetch 
+
+COPY ui .
+RUN pnpm install && pnpm build
+
+FROM golang:bookworm AS gobuilder
 ARG VERSION
 WORKDIR /src
 COPY . .
-COPY --from=uibuilder /src/build ./ui/build
-RUN apk add git
+COPY --from=uibuilder /src/dist ./ui/dist
+#RUN apk add git
 RUN go generate ./... && CGO_ENABLED=0 go build -ldflags "-s -w -X main.version=${VERSION}" -o rmfakecloud-docker ./cmd/rmfakecloud/
 
 FROM scratch

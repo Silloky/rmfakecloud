@@ -18,9 +18,6 @@ func (app *ReactAppWrapper) RegisterRoutes(router *gin.Engine) {
 	router.GET("/robots.txt", func(c *gin.Context) {
 		c.FileFromFS("/robots.txt", app.fs)
 	})
-	router.GET("/pdf.worker.js", func(c *gin.Context) {
-		c.FileFromFS("/pdf.worker.js", app.fs)
-	})
 
 	//hack for index.html
 	router.NoRoute(func(c *gin.Context) {
@@ -51,16 +48,16 @@ func (app *ReactAppWrapper) RegisterRoutes(router *gin.Engine) {
 		c.Status(http.StatusOK)
 	})
 	auth.GET("sync", func(c *gin.Context) {
-		uid := c.GetString(userIDContextKey)
+		uid := userID(c)
 		br := c.GetString(browserIDContextKey)
 		log.Info("browser", br)
 		app.h.NotifySync(uid, br)
 	})
 
 	auth.GET("newcode", app.newCode)
-	auth.GET("profile", app.newCode)
-	auth.POST("changePassword", app.changePassword)
-	auth.POST("changeEmail", app.changePassword)
+	// auth.GET("profile", app.newCode)
+	auth.POST("profile", app.changePassword)
+	// auth.POST("changeEmail", app.changePassword)
 
 	auth.GET("documents", app.listDocuments)
 	auth.GET("documents/:docid", app.getDocument)
@@ -71,6 +68,17 @@ func (app *ReactAppWrapper) RegisterRoutes(router *gin.Engine) {
 	auth.PUT("documents", app.updateDocument)
 	auth.POST("folders", app.createFolder)
 	auth.GET("documents/:docid/metadata", app.getDocumentMetadata)
+
+	// integrations
+	auth.GET("integrations", app.listIntegrations)
+	auth.POST("integrations", app.createIntegration)
+	auth.GET("integrations/:intid", app.getIntegration)
+	auth.PUT("integrations/:intid", app.updateIntegration)
+	auth.DELETE("integrations/:intid", app.deleteIntegration)
+
+	auth.GET("integrations/:intid/explore/*path", app.exploreIntegration)
+	auth.GET("integrations/:intid/metadata/*path", app.getMetadataIntegration)
+	auth.GET("integrations/:intid/download/*path", app.downloadThroughIntegration)
 
 	//admin
 	admin := auth.Group("")

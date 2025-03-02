@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"runtime"
 
+	"github.com/ddvk/rmfakecloud/internal/messages"
 	"github.com/gin-gonic/gin"
 	log "github.com/sirupsen/logrus"
 )
@@ -19,33 +20,24 @@ const (
 )
 
 func (app *App) registerRoutes(router *gin.Engine) {
-
 	//endpoints discovery
 	router.GET("/discovery/v1/endpoints", func(c *gin.Context) {
-		endpoint, err := app.MyEndpoint()
-		if err != nil {
-			log.Warn("endpoint error:", err.Error())
-			c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{"err": err.Error()})
-			return
-		}
-
-		c.JSON(http.StatusOK, gin.H{
-			"notifications": endpoint,
-			"webapp":        endpoint,
+		c.JSON(http.StatusOK, messages.EndpointsResponse{
+			Notifications: app.cfg.CloudHost,
+			Webapp:        app.cfg.CloudHost,
+			// TODO: investigate usage
+			// MQTT: app.cfg.CloudHost,
 		})
 	})
-  router.GET("/discovery/v1/webapp", func(c *gin.Context) {                                                                                                       
-                endpoint, err := app.MyEndpoint()                                                                                                                 
-                if err != nil {                                                                                                                                   
-                        log.Warn("endpoint error:", err.Error())                                                                                                  
-                        c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{"err": err.Error()})                                                          
-                        return                                                                                                                                    
-                }                                                                                                                                                 
-          c.JSON(http.StatusOK, gin.H{                                                                                                                            
-                  "Status": "OK",                                                                                                                                 
-                  "Host": endpoint,                                                                                                                               
-          })                                                                                                                                                      
-  })                                                                                                                                                              
+
+	// TODO: get client version from headers
+	// in 3.15 only https without a port is used by the client
+	router.GET("/discovery/v1/webapp", func(c *gin.Context) {
+		c.JSON(http.StatusOK, messages.HostResponse{
+			Host:   app.cfg.CloudHost,
+			Status: "OK",
+		})
+	})
 
 	router.GET("/health", func(c *gin.Context) {
 		count := app.hub.ClientCount()
@@ -80,27 +72,12 @@ func (app *App) registerRoutes(router *gin.Engine) {
 		c.Status(http.StatusOK)
 	})
 
+	router.POST("/analytics/v2/events", app.nullReport)
 	//some telemetry stuff from ping.
-	router.POST("/v1/reports", func(c *gin.Context) {
-		_, err := io.ReadAll(c.Request.Body)
-
-		if err != nil {
-			log.Warn("cant parse telemetry, ignored")
-			c.Status(http.StatusOK)
-			return
-		}
-		c.Status(http.StatusOK)
-	})
-	router.POST("/v2/reports", func(c *gin.Context) {
-		_, err := io.ReadAll(c.Request.Body)
-
-		if err != nil {
-			log.Warn("cant parse telemetry, ignored")
-			c.Status(http.StatusOK)
-			return
-		}
-		c.Status(http.StatusOK)
-	})
+	router.POST("/v1/reports", app.nullReport)
+	router.POST("/v2/reports", app.nullReport)
+	router.POST("/report/v1", app.nullReport)
+	router.POST("/v2/events", app.nullReport)
 
 	//routes needing api authentitcation
 	authRoutes := router.Group("/")
@@ -158,6 +135,9 @@ func (app *App) registerRoutes(router *gin.Engine) {
 		authRoutes.POST("/sync/v3/check-files", app.checkFilesPresence)
 		authRoutes.GET("/sync/v3/missing", app.checkMissingBlob)
 
-		authRoutes.GET("/sync/v4/root", app.syncGetRootV3)
+		authRoutes.GET("/sync/v4/root", app.syncGetRootV4)
+
+		// reports
+		authRoutes.POST("/sync/reports/v1", app.syncReports)
 	}
 }

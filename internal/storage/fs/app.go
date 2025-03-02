@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"slices"
 	"strconv"
 	"time"
 
@@ -70,7 +71,7 @@ func (app *App) parseToken(token string) (*StorageClaim, error) {
 	if err != nil {
 		return nil, err
 	}
-	if claim.StandardClaims.Audience != storageUsage {
+	if !slices.Contains(claim.Audience, storageUsage) {
 		return nil, errors.New("not a storage token")
 	}
 	return claim, nil
@@ -143,15 +144,17 @@ func (app *App) downloadBlob(c *gin.Context) {
 
 	if scope != ReadScope {
 		c.AbortWithStatus(http.StatusForbidden)
+		return
 	}
 
 	if blobID == "" {
 		c.AbortWithStatus(http.StatusBadRequest)
+		return
 	}
 
 	log.Info("Requestng blob: ", blobID)
 
-	reader, generation, size, err := app.fs.LoadBlob(uid, blobID)
+	reader, generation, size, crc32c, err := app.fs.LoadBlob(uid, blobID)
 	if err != nil {
 		if err == ErrorNotFound {
 			c.AbortWithStatus(http.StatusNotFound)
@@ -162,6 +165,8 @@ func (app *App) downloadBlob(c *gin.Context) {
 		return
 	}
 	defer reader.Close()
+
+	common.AddCRCHeader(c, crc32c)
 
 	if blobID == rootBlob {
 		log.Debug("Sending gen for root: ", generation)
@@ -182,16 +187,19 @@ func (app *App) uploadBlob(c *gin.Context) {
 	err := VerifyURLParams([]string{uid, blobID, exp, scope}, exp, signature, app.cfg.JWTSecretKey)
 	if err != nil {
 		c.AbortWithStatus(http.StatusForbidden)
+		return
 	}
 	log.Info(exp, signature)
 
 	if blobID == "" {
 		c.AbortWithStatus(http.StatusBadRequest)
+		return
 	}
 
 	if scope != WriteScope {
 		log.Warn("wrong scope: " + scope)
 		c.AbortWithStatus(http.StatusForbidden)
+		return
 	}
 
 	body := c.Request.Body

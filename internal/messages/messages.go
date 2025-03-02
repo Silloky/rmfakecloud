@@ -112,6 +112,13 @@ type UploadResponse struct {
 	Version           int    `json:"Version"`
 }
 
+// EndpointReponse endpoint hosts
+type EndpointsResponse struct {
+	Notifications string `json:"notifications"`
+	Webapp string `json:"webapp"`
+	MQTT string `json:"mqttbroker,omitempty"`
+}
+
 // HostResponse what the host responded
 type HostResponse struct {
 	Host   string `json:"Host"`
@@ -136,10 +143,24 @@ type SyncCompletedRequestV2 struct {
 	Generation int64 `json:"generation"`
 }
 
-// SyncRootV3
-type SyncRootV3 struct {
+// SyncRootV3Request
+type SyncRootV3Request struct {
 	Generation int64  `json:"generation"`
 	Hash       string `json:"hash,omitempty"`
+	Broadcast  bool   `json:"broadcast"`
+}
+
+// SyncRootV3Response
+type SyncRootV3Response struct {
+	Generation int64  `json:"generation"`
+	Hash       string `json:"hash,omitempty"`
+}
+
+// SyncRootV4Response
+type SyncRootV4Response struct {
+	Generation    int64  `json:"generation"`
+	Hash          string `json:"hash,omitempty"`
+	SchemaVersion int64  `json:"schemaVersion"`
 }
 
 type CheckFiles struct {
@@ -179,7 +200,7 @@ type IntegrationFile struct {
 	ID               string    `json:"id"`
 	Name             string    `json:"name"`
 	ProvidedFileType string    `json:"providedFileType"`
-	Size             int       `json:"size"`
+	Size             int64     `json:"size"`
 	SourceFileType   string    `json:"sourceFileType"`
 }
 
@@ -204,8 +225,11 @@ type IntegrationFolder struct {
 }
 
 type IntegrationMetadata struct {
-	FileType  string `json:"fileType"`
-	ID        string `json:"id"`
-	Name      string `json:"name"`
-	Thumbnail string `json:"thumbnail"`
+	ID   string `json:"id"`
+	Name string `json:"name"`
+	// Thumbnail is base64 encoded string of an image/png
+	Thumbnail        []byte `json:"thumbnail"`
+	SourceFileType   string `json:"sourceFileType"`
+	ProvidedFileType string `json:"providedFileType"`
+	FileType         string `json:"fileType"`
 }

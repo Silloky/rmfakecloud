@@ -1,5 +1,7 @@
 [![rm1](https://img.shields.io/badge/rM1-supported-green)](https://remarkable.com/store/remarkable)
 [![rm2](https://img.shields.io/badge/rM2-supported-green)](https://remarkable.com/store/remarkable-2)
+[![rmpro](https://img.shields.io/badge/rmpro-supported-green)](https://remarkable.com/store/remarkable-paper/pro)
+
 [![opkg](https://img.shields.io/badge/OPKG-rmfakecloud--proxy-blue)](https://toltec-dev.org/)
 
 # rmfakecloud
@@ -8,7 +10,9 @@ This is a replacement of the cloud, in case you want to sync/backup your files a
 ## [Docs](https://ddvk.github.io/rmfakecloud/)
 
 ## NB
-The current release of rmfakecloud support file synchronization for SW <= 3.13.1. Newer releases have not been tested yet.
+for SW 3.15 `STORAGE_URL` should not be set (or only https://some.ho.st without a port should be used)
+
+The current release of rmfakecloud support file synchronization for SW <= 3.14.1. Newer releases have not been tested yet.
 
 For Tablet SW > 3.X, rendering of the notebooks [is not yet supported](https://github.com/ddvk/rmfakecloud/issues/255).
 
@@ -63,4 +67,7 @@ run `./dev.sh` which should start the UI and backend
 
     ```
     if you see *SSL Handshake failed* then something is wrong with the certs
-
+- check sync logs 
+   ```
+   journalctl -u rm-sync
+   ```

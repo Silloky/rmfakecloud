@@ -63,20 +63,23 @@ type IntegrationConfig struct {
 	Provider string
 	Name     string
 
-	// WebDav
-	Username string
-	Password string
-	Address  string
+	// WebDav // FTP
+	Username string `yaml:"username,omitempty"`
+	Password string `yaml:"password,omitempty"`
+	Address  string `yaml:"address,omitempty"`
+
+	// FTP
+	ActiveTransfers bool `yaml:"activetransfers,omitempty"`
 
 	// Insecure ignore TLS cert errors
-	Insecure bool
+	Insecure bool `yaml:"insecure,omitempty"`
 
 	// Dropbox
-	Accesstoken string
+	Accesstoken string `yaml:"accesstoken,omitempty"`
 
 	// Localfs
-	//TODO: experimental, security blah blah
-	Path string
+	// really dangerous as it allows path traversal
+	Path string `yaml:"path,omitempty"`
 }
 
 // GenPassword generates a new random password

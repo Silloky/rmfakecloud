@@ -221,6 +221,12 @@ type metapayload struct {
 	FileName string `json:"file_name"`
 }
 
+func userID(c *gin.Context) string {
+	//TODO: suppress the warning
+	//codeql[go/path-injection]
+	return c.GetString(userIDKey)
+}
+
 func extFromContentType(contentType string) (string, error) {
 	switch contentType {
 
@@ -233,7 +239,7 @@ func extFromContentType(contentType string) (string, error) {
 }
 
 func (app *App) uploadDoc(c *gin.Context) {
-	uid := c.GetString(userIDKey)
+	uid := userID(c)
 	deviceID := c.GetString(deviceIDKey)
 	syncVer := getSyncVersion(c)
 
@@ -288,11 +294,6 @@ func (app *App) uploadDoc(c *gin.Context) {
 	}
 	defer f.Close()
 
-	if err != nil {
-		log.Error(handlerLog, err)
-		internalError(c, "cant upload document")
-		return
-	}
 	fileName := m.FileName + ext
 	log.Info("Uploading: ", fileName)
 
@@ -316,7 +317,7 @@ func getSyncVersion(c *gin.Context) common.SyncVersion {
 
 // new read on rm api
 func (app *App) uploadDocV2(c *gin.Context) {
-	uid := c.GetString(userIDKey)
+	uid := userID(c)
 	deviceID := c.GetString(deviceIDKey)
 	log.Info("uploading file for: ", uid)
 	syncVer := getSyncVersion(c)
@@ -413,7 +414,7 @@ type emailForm struct {
 }
 
 func (app *App) sendEmail(c *gin.Context) {
-	uid := c.GetString(userIDKey)
+	uid := userID(c)
 	log.Info("Sending mail for: ", uid)
 
 	if app.cfg.SMTPConfig == nil {
@@ -511,7 +512,7 @@ func (app *App) sendEmail(c *gin.Context) {
 }
 func (app *App) listDocuments(c *gin.Context) {
 
-	uid := c.GetString(userIDKey)
+	uid := userID(c)
 	withBlob, _ := strconv.ParseBool(c.Query("withBlob"))
 	docID := common.QueryS("doc", c)
 	log.Debug(handlerLog, "params: withBlob: ", withBlob, ", DocId: ", docID)
@@ -555,7 +556,7 @@ func (app *App) listDocuments(c *gin.Context) {
 	c.JSON(http.StatusOK, result)
 }
 func (app *App) deleteDocument(c *gin.Context) {
-	uid := c.GetString(userIDKey)
+	uid := userID(c)
 	deviceID := c.GetString(deviceIDKey)
 
 	var req []messages.IDRequest
@@ -593,7 +594,7 @@ func (app *App) deleteDocument(c *gin.Context) {
 	c.JSON(http.StatusOK, result)
 }
 func (app *App) updateStatus(c *gin.Context) {
-	uid := c.GetString(userIDKey)
+	uid := userID(c)
 	deviceID := c.GetString(deviceIDKey)
 	var req []messages.RawMetadata
 
@@ -633,6 +634,7 @@ func (app *App) updateStatus(c *gin.Context) {
 }
 
 func (app *App) locateService(c *gin.Context) {
+	// old api < 3 something
 	svc := c.Param("service")
 	log.Infof("Requested: %s\n", svc)
 	host := config.DefaultHost
@@ -644,7 +646,7 @@ func (app *App) locateService(c *gin.Context) {
 }
 func (app *App) syncComplete(c *gin.Context) {
 	log.Info("Sync complete")
-	uid := c.GetString(userIDKey)
+	uid := userID(c)
 	deviceID := c.GetString(deviceIDKey)
 
 	var res messages.SyncCompleted
@@ -654,7 +656,7 @@ func (app *App) syncComplete(c *gin.Context) {
 
 func (app *App) syncCompleteV2(c *gin.Context) {
 	log.Info("Sync completeV2")
-	uid := c.GetString(userIDKey)
+	uid := userID(c)
 	deviceID := c.GetString(deviceIDKey)
 
 	var req messages.SyncCompletedRequestV2
@@ -677,7 +679,7 @@ func formatExpires(t time.Time) string {
 }
 
 func (app *App) blobStorageDownload(c *gin.Context) {
-	uid := c.GetString(userIDKey)
+	uid := userID(c)
 	var req messages.BlobStorageRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		log.Error(err)
@@ -718,7 +720,7 @@ func (app *App) blobStorageUpload(c *gin.Context) {
 	if req.Initial {
 		log.Info("--- Initial Sync ---")
 	}
-	uid := c.GetString(userIDKey)
+	uid := userID(c)
 	url, exp, err := app.blobStorer.GetBlobURL(uid, req.RelativePath, true)
 	if err != nil {
 		log.Error(err)
@@ -737,37 +739,69 @@ func (app *App) blobStorageUpload(c *gin.Context) {
 }
 
 func (app *App) syncUpdateRootV3(c *gin.Context) {
-	var rootv3 messages.SyncRootV3
-	err := json.NewDecoder(c.Request.Body).Decode(&rootv3)
+	var rootv3 messages.SyncRootV3Request
+	err := c.BindJSON(&rootv3)
 	if err != nil {
 		log.Error(err)
 		c.AbortWithStatus(http.StatusBadRequest)
 		return
 	}
 
-	uid := c.GetString(userIDKey)
-	newgeneration, err := app.blobStorer.StoreBlob(uid, "root", bytes.NewBufferString(rootv3.Hash), rootv3.Generation)
+	uid := userID(c)
+	newgeneration, err := app.blobStorer.StoreBlob(uid, RootHash, bytes.NewBufferString(rootv3.Hash), rootv3.Generation)
 	if err != nil {
 		log.Error(err)
 		c.AbortWithStatus(http.StatusInternalServerError)
 		return
 	}
 
-	c.JSON(http.StatusOK, messages.SyncRootV3{
+	if rootv3.Broadcast {
+		deviceID := c.GetString(deviceIDKey)
+
+		log.Info("got sync completed, gen: ", newgeneration)
+
+		app.hub.NotifySync(uid, deviceID)
+	}
+
+	c.JSON(http.StatusOK, messages.SyncRootV3Response{
 		Generation: newgeneration,
 		Hash:       rootv3.Hash,
 	})
 }
 
-func (app *App) syncGetRootV3(c *gin.Context) {
-	uid := c.GetString(userIDKey)
+const SchemaVersion = 3
 
-	reader, generation, _, err := app.blobStorer.LoadBlob(uid, "root")
+const RmTokenTtlHeader = "Rm-Token-Ttl-Hint"
+const RmFileHeader = "rm-filename"
+
+const RootHash = "root"
+
+// crcJSON calculates and ands the crc32c header
+// TODO: fix it with a custom render or something
+func crcJSON(c *gin.Context, status int, msg any) {
+	b, err := json.Marshal(msg)
+	if err != nil {
+		panic(err)
+	}
+
+	crc, err := common.CRC32FromReader(bytes.NewBuffer(b))
+	if err != nil {
+		panic(err)
+	}
+	common.AddCRCHeader(c, crc)
+	c.Data(status, "application/json", b)
+}
+
+func (app *App) syncGetRootV3(c *gin.Context) {
+	uid := userID(c)
+	reader, generation, _, _, err := app.blobStorer.LoadBlob(uid, RootHash)
 	if err == fs.ErrorNotFound {
 		log.Warn("No root file found, assuming this is a new account")
 		c.JSON(http.StatusNotFound, gin.H{"message": "root not found"})
 		return
-	} else if err != nil {
+	}
+
+	if err != nil {
 		log.Error(err)
 		c.AbortWithStatus(http.StatusInternalServerError)
 		return
@@ -780,14 +814,44 @@ func (app *App) syncGetRootV3(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, messages.SyncRootV3{
+	c.JSON(http.StatusOK, messages.SyncRootV3Response{
 		Generation: generation,
 		Hash:       string(roothash),
 	})
 }
 
+func (app *App) syncGetRootV4(c *gin.Context) {
+	uid := userID(c)
+	reader, generation, _, _, err := app.blobStorer.LoadBlob(uid, RootHash)
+	if err == fs.ErrorNotFound {
+		log.Warn("No root file found, assuming this is a new account")
+		crcJSON(c, http.StatusOK, messages.SyncRootV4Response{
+			SchemaVersion: SchemaVersion,
+		})
+		return
+	}
+
+	if err != nil {
+		log.Error(err)
+		c.AbortWithStatus(http.StatusInternalServerError)
+		return
+	}
+
+	roothash, err := io.ReadAll(reader)
+	if err != nil {
+		log.Error(err)
+		c.AbortWithStatus(http.StatusInternalServerError)
+		return
+	}
+	crcJSON(c, http.StatusOK, messages.SyncRootV4Response{
+		Generation:    generation,
+		Hash:          string(roothash),
+		SchemaVersion: SchemaVersion,
+	})
+}
+
 func (app *App) checkFilesPresence(c *gin.Context) {
-	uid := c.GetString(userIDKey)
+	uid := userID(c)
 	var req messages.CheckFiles
 	if err := c.ShouldBindJSON(&req); err != nil {
 		log.Error(err)
@@ -816,46 +880,69 @@ func (app *App) checkMissingBlob(c *gin.Context) {
 }
 
 func (app *App) blobStorageRead(c *gin.Context) {
-	uid := c.GetString(userIDKey)
+	uid := userID(c)
 	blobID := common.ParamS(fileKey, c)
 
-	reader, _, size, err := app.blobStorer.LoadBlob(uid, blobID)
+	reader, _, size, crc32c, err := app.blobStorer.LoadBlob(uid, blobID)
+	if err == fs.ErrorNotFound {
+		log.Warn(err)
+		c.AbortWithStatus(http.StatusNotFound)
+		return
+	}
 	if err != nil {
 		log.Error(err)
 		c.AbortWithStatus(http.StatusInternalServerError)
 		return
 	}
 	defer reader.Close()
+	common.AddCRCHeader(c, crc32c)
 
 	c.DataFromReader(http.StatusOK, size, "application/octet-stream", reader, nil)
 }
 
 func (app *App) blobStorageWrite(c *gin.Context) {
-	uid := c.GetString(userIDKey)
+	uid := userID(c)
 	blobID := common.ParamS(fileKey, c)
 
-	newgeneration, err := app.blobStorer.StoreBlob(uid, blobID, c.Request.Body, 0)
+	fileName := c.GetHeader(RmFileHeader)
+	hash := c.GetHeader(common.CRC32CHashHeader)
+	log.Debugf("TODO: check/save etc. write file '%s', hash '%s'", fileName, hash)
+
+	_, err := app.blobStorer.StoreBlob(uid, blobID, c.Request.Body, 0)
 	if err != nil {
 		log.Error(err)
 		c.AbortWithStatus(http.StatusInternalServerError)
 		return
 	}
 
-	c.JSON(http.StatusOK, messages.SyncRootV3{
-		Generation: newgeneration,
-		Hash:       string(blobID),
-	})
+	c.Status(http.StatusOK)
 }
 
 func (app *App) integrationsGetMetadata(c *gin.Context) {
-	var metadata messages.IntegrationMetadata
-	metadata.Thumbnail = ""
-	c.JSON(http.StatusOK, &metadata)
+	uid := userID(c)
+	integrationID := common.ParamS(integrationKey, c)
+	fileID := common.ParamS(fileKey, c)
+
+	integrationProvider, err := integrations.GetIntegrationProvider(app.userStorer, uid, integrationID)
+	if err != nil {
+		log.Error(fmt.Errorf("can't get integration, %v", err))
+		c.AbortWithStatus(http.StatusInternalServerError)
+		return
+	}
+
+	metadata, err := integrationProvider.GetMetadata(fileID)
+	if err != nil {
+		log.Error(err)
+		c.AbortWithStatus(http.StatusInternalServerError)
+		return
+	}
+
+	c.JSON(http.StatusOK, metadata)
 }
 
 func (app *App) integrationsUpload(c *gin.Context) {
 	log.Info("uploading...")
-	uid := c.GetString(userIDKey)
+	uid := userID(c)
 	integrationID := common.ParamS(integrationKey, c)
 	folderID := common.ParamS(folderKey, c)
 	name := common.QueryS("name", c)
@@ -881,7 +968,7 @@ func (app *App) integrationsUpload(c *gin.Context) {
 }
 
 func (app *App) integrationsGetFile(c *gin.Context) {
-	uid := c.GetString(userIDKey)
+	uid := userID(c)
 	integrationID := common.ParamS(integrationKey, c)
 	fileID := common.ParamS(fileKey, c)
 
@@ -892,19 +979,20 @@ func (app *App) integrationsGetFile(c *gin.Context) {
 		return
 	}
 
-	reader, err := integrationProvider.Download(fileID)
+	reader, size, err := integrationProvider.Download(fileID)
 	if err != nil {
-		log.Error(err)
+		log.Errorf("cannot download file %s, %v", fileID, err)
 		c.AbortWithStatus(http.StatusInternalServerError)
 		return
 	}
 
 	defer reader.Close()
 
-	c.DataFromReader(http.StatusOK, -1, "application/octet-stream", reader, nil)
+	c.DataFromReader(http.StatusOK, size, "application/octet-stream", reader, nil)
 }
+
 func (app *App) integrationsList(c *gin.Context) {
-	uid := c.GetString(userIDKey)
+	uid := userID(c)
 	integrationID := common.ParamS(integrationKey, c)
 	folder := common.ParamS(folderKey, c)
 	folderDepthStr := c.Query("folderDepth")
@@ -931,7 +1019,7 @@ func (app *App) integrationsList(c *gin.Context) {
 	c.JSON(http.StatusOK, response)
 }
 func (app *App) integrations(c *gin.Context) {
-	uid := c.GetString(userIDKey)
+	uid := userID(c)
 
 	response, err := integrations.List(app.userStorer, uid)
 
@@ -943,7 +1031,7 @@ func (app *App) integrations(c *gin.Context) {
 	c.JSON(http.StatusOK, response)
 }
 func (app *App) uploadRequest(c *gin.Context) {
-	uid := c.GetString(userIDKey)
+	uid := userID(c)
 	var req []messages.UploadRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		log.Errorf("could not bind %v", err)
@@ -1127,7 +1215,7 @@ func (app *App) handleHwr(c *gin.Context) {
 }
 
 func (app *App) connectWebSocket(c *gin.Context) {
-	uid := c.GetString(userIDKey)
+	uid := userID(c)
 	deviceID := c.GetString(deviceIDKey)
 
 	log.Info("connecting websocket from: ", uid)
@@ -1146,6 +1234,27 @@ func (app *App) connectWebSocket(c *gin.Context) {
 	}
 
 	go app.hub.ConnectWs(uid, deviceID, connection)
+}
+
+// syncReports reports sync errors back
+func (app *App) syncReports(c *gin.Context) {
+	body, err := io.ReadAll(c.Request.Body)
+
+	if err != nil {
+		log.Warn("cant parse sync report, ignored")
+		c.Status(http.StatusOK)
+		return
+	}
+	log.Infof("got sync report: %s", string(body))
+	c.Status(http.StatusOK)
+}
+
+func (app *App) nullReport(c *gin.Context) {
+	// _, err := io.ReadAll(c.Request.Body)
+	// if err != nil {
+	// 	log.Warn("could not read report data")
+	// }
+	c.Status(http.StatusOK)
 }
 
 // / remove remarkable ads

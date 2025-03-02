@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
-	"io/ioutil"
 	"net/url"
 	"os"
 	"path"
@@ -197,12 +196,9 @@ func (fs *FileSystemStorage) CreateBlobFolder(uid, foldername, parent string) (d
 	}
 
 	metadataEntry := models.NewHashEntry(metahash, docID+storage.MetadataFileExt, size)
-	if err != nil {
-		return
-	}
-
 	hashDoc := models.NewHashDocWithMeta(docID, metadata)
 	err = hashDoc.AddFile(metadataEntry)
+
 	if err != nil {
 		return nil, err
 	}
@@ -281,12 +277,15 @@ func updateTree(tree *models.HashTree, storage *LocalBlobStorage, treeMutation f
 func (fs *FileSystemStorage) CreateBlobDocument(uid, filename, parent string, stream io.Reader) (doc *storage.Document, err error) {
 	ext := path.Ext(filename)
 	switch ext {
-	case storage.PdfFileExt:
-		fallthrough
-	case storage.EpubFileExt:
+	case storage.EpubFileExt, storage.PdfFileExt, storage.RmDocFileExt:
 	default:
 		return nil, errors.New("unsupported extension: " + ext)
 	}
+
+	if ext == storage.RmDocFileExt {
+		return nil, errors.New("TODO: not implemented yet")
+	}
+
 	//TODO: zips and rm
 	blobPath := fs.getUserBlobPath(uid)
 	docid := uuid.New().String()
@@ -355,7 +354,7 @@ func (fs *FileSystemStorage) CreateBlobDocument(uid, filename, parent string, st
 	// given that the payload can be huge
 	// calculate the hash while streaming the payload to the storage
 	// then rename it
-	tmpdoc, err := ioutil.TempFile(blobPath, ".tmp")
+	tmpdoc, err := os.CreateTemp(blobPath, "blob-upload")
 	if err != nil {
 		return
 	}
@@ -376,8 +375,6 @@ func (fs *FileSystemStorage) CreateBlobDocument(uid, filename, parent string, st
 	}
 	payloadEntry = models.NewHashEntry(payloadHash, docid+ext, size)
 	err = hashDoc.AddFile(payloadEntry)
-
-	hashDoc.PayloadSize = size
 
 	if err != nil {
 		return nil, err
@@ -454,7 +451,7 @@ func (fs *FileSystemStorage) GetBlobURL(uid, blobid string, write bool) (docurl 
 }
 
 // LoadBlob Opens a blob by id
-func (fs *FileSystemStorage) LoadBlob(uid, blobid string) (reader io.ReadCloser, gen int64, size int64, err error) {
+func (fs *FileSystemStorage) LoadBlob(uid, blobid string) (reader io.ReadCloser, gen int64, size int64, crc32 string, err error) {
 	generation := int64(0)
 	blobPath := path.Join(fs.getUserBlobPath(uid), common.Sanitize(blobid))
 	log.Debugln("Fullpath:", blobPath)
@@ -464,7 +461,7 @@ func (fs *FileSystemStorage) LoadBlob(uid, blobid string) (reader io.ReadCloser,
 		err := lock.LockWithTimeout(time.Duration(time.Second * 5))
 		if err != nil {
 			log.Error("cannot obtain lock")
-			return nil, 0, 0, err
+			return nil, 0, 0, "", err
 		}
 		defer lock.Unlock()
 
@@ -476,11 +473,27 @@ func (fs *FileSystemStorage) LoadBlob(uid, blobid string) (reader io.ReadCloser,
 
 	fi, err := os.Stat(blobPath)
 	if err != nil || fi.IsDir() {
-		return nil, generation, 0, ErrorNotFound
+		return nil, generation, 0, "", ErrorNotFound
 	}
 
-	reader, err = os.Open(blobPath)
-	return reader, generation, fi.Size(), err
+	osFile, err := os.Open(blobPath)
+	if err != nil {
+		log.Errorf("cannot open blob %v", err)
+		return
+	}
+	//TODO: cache the crc32
+	crc32, err = common.CRC32FromReader(osFile)
+	if err != nil {
+		log.Errorf("cannot get crc32 hash %v", err)
+		return
+	}
+	_, err = osFile.Seek(0, 0)
+	if err != nil {
+		log.Errorf("cannot rewind file %v", err)
+		return
+	}
+	reader = osFile
+	return reader, generation, fi.Size(), crc32, err
 }
 
 // StoreBlob stores a document
@@ -525,8 +538,8 @@ func (fs *FileSystemStorage) StoreBlob(uid, id string, stream io.Reader, lastGen
 		}
 		hist.WriteString("\n")
 
-		reader = ioutil.NopCloser(&buf)
-		size, err1 := hist.Seek(0, os.SEEK_CUR)
+		reader = io.NopCloser(&buf)
+		size, err1 := hist.Seek(0, io.SeekCurrent)
 		if err1 != nil {
 			err = err1
 			return

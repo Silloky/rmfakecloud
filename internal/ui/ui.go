@@ -5,6 +5,7 @@ import (
 	"io/fs"
 	"net/http"
 	"path"
+	"time"
 
 	"github.com/ddvk/rmfakecloud/internal/app/hub"
 	"github.com/ddvk/rmfakecloud/internal/common"
@@ -69,6 +70,7 @@ type ReactAppWrapper struct {
 
 // hack for serving index.html on /
 const indexReplacement = "/default"
+const jsBuildFolder = "dist"
 
 // New Create a React app
 func New(cfg *config.Config,
@@ -78,7 +80,7 @@ func New(cfg *config.Config,
 	docHandler documentHandler,
 	blobHandler blobHandler) *ReactAppWrapper {
 
-	sub, err := fs.Sub(webui.Assets, "build")
+	sub, err := fs.Sub(webui.Assets, jsBuildFolder)
 	if err != nil {
 		panic("not embedded?")
 	}
@@ -91,8 +93,8 @@ func New(cfg *config.Config,
 		hub:             h,
 	}
 	staticWrapper := ReactAppWrapper{
-		fs:            http.FS(sub),
-		prefix:        "/static",
+		fs:            common.NewLastModifiedFS(http.FS(sub), time.Now()),
+		prefix:        "/assets",
 		cfg:           cfg,
 		userStorer:    userStorer,
 		codeConnector: codeConnector,
@@ -118,5 +120,5 @@ func (w ReactAppWrapper) Open(filepath string) (http.File, error) {
 	return f, err
 }
 func badReq(c *gin.Context, message string) {
-	c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": message})
+	c.AbortWithStatusJSON(http.StatusBadRequest, viewmodel.NewErrorResponse(message))
 }

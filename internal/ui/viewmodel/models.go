@@ -31,6 +31,16 @@ type ChangeEmailForm struct {
 	CurrentPassword string `json:"currentPassword"`
 }
 
+// ErrorResponse
+type ErrorResponse struct {
+	Error string `json:"error"`
+}
+func NewErrorResponse(errormsg string) ErrorResponse {
+	return ErrorResponse {
+		Error: errormsg,
+	}
+}
+
 // DocumentTree a tree of documents
 type DocumentTree struct {
 	Entries []Entry
@@ -89,7 +99,7 @@ func DocTreeFromHashTree(tree *models.HashTree) *DocumentTree {
 			Type:         d.MetadataFile.CollectionType,
 			LastModified: lastModified,
 			FileType:     d.PayloadType,
-			Size:         d.PayloadSize,
+			Size:         d.Size,
 		})
 	}
 
@@ -206,6 +216,7 @@ type User struct {
 	Email        string `json:"email"`
 	Name         string `json:"name"`
 	NewPassword  string `json:"newpassword,omitempty"`
+	IsAdmin 	 bool `json:"isAdmin"`
 	CreatedAt    time.Time
 	Integrations []string `json:"integrations,omitempty"`
 }

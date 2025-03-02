@@ -13,16 +13,18 @@ import (
 )
 
 const (
-	webdavProvider  = "webdav"
-	dropboxProvider = "dropbox"
-	googleProvider  = "google"
-	localfsProvider = "localfs"
+	FtpProvider     = "ftp"
+	WebdavProvider  = "webdav"
+	DropboxProvider = "dropbox"
+	GoogleProvider  = "google"
+	LocalfsProvider = "localfs"
 )
 
 // IntegrationProvider abstracts 3rd party integrations
 type IntegrationProvider interface {
+	GetMetadata(fileID string) (result *messages.IntegrationMetadata, err error)
 	List(folderID string, depth int) (result *messages.IntegrationFolder, err error)
-	Download(fileID string) (io.ReadCloser, error)
+	Download(fileID string) (io.ReadCloser, int64, error)
 	Upload(folderID, name, fileType string, reader io.ReadCloser) (string, error)
 }
 
@@ -37,12 +39,14 @@ func GetIntegrationProvider(storer storage.UserStorer, uid, integrationid string
 			continue
 		}
 		switch intg.Provider {
-		case webdavProvider:
-			return newWebDav(intg), nil
-		case dropboxProvider:
+		case DropboxProvider:
 			return newDropbox(intg), nil
-		case localfsProvider:
+		case FtpProvider:
+			return newFTP(intg), nil
+		case LocalfsProvider:
 			return newLocalFS(intg), nil
+		case WebdavProvider:
+			return newWebDav(intg), nil
 		}
 	}
 	return nil, fmt.Errorf("integration not found or no implmentation (only webdav) %s", integrationid)
@@ -52,11 +56,13 @@ func GetIntegrationProvider(storer storage.UserStorer, uid, integrationid string
 // fix the name
 func fixProviderName(n string) string {
 	switch n {
-	case dropboxProvider:
-		return "Dropbox"
-	case googleProvider:
+	case FtpProvider:
 		fallthrough
-	case webdavProvider:
+	case DropboxProvider:
+		return "Dropbox"
+	case GoogleProvider:
+		fallthrough
+	case WebdavProvider:
 		return "GoogleDrive"
 	default:
 		return n
@@ -125,7 +131,6 @@ func visitDir(root, currentPath string, depth int, parentFolder *messages.Integr
 			docName := strings.TrimSuffix(entryName, ext)
 			extension := strings.TrimPrefix(ext, ".")
 
-
 			file := &messages.IntegrationFile{
 				ProvidedFileType: contentType,
 				DateChanged:      d.ModTime(),
@@ -134,7 +139,7 @@ func visitDir(root, currentPath string, depth int, parentFolder *messages.Integr
 				ID:               encodedPath,
 				FileID:           encodedPath,
 				Name:             docName,
-				Size:             int(d.Size()),
+				Size:             d.Size(),
 				SourceFileType:   contentType,
 			}
 
